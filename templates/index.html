@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Image Describer</title>
+    <style>
+        /* Base and Layout */
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            background-color: #eef2ff; 
+            color: #1f2937;
+        }
+        .container { 
+            max-width: 1000px; 
+            margin: 40px auto; 
+            background: white; 
+            padding: 30px; 
+            border-radius: 12px; 
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1); 
+        }
+        h1 { 
+            color: #1e40af; 
+            border-bottom: 3px solid #bfdbfe; 
+            padding-bottom: 15px; 
+            margin-top: 0; 
+            font-size: 2em;
+        }
+        
+        /* Status Bar Styling */
+        .status-bar { 
+            padding: 12px 15px; 
+            margin-bottom: 25px; 
+            border-radius: 8px; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            background-color: #e0f2fe; 
+            font-weight: 600; 
+            border: 1px solid #93c5fd;
+        }
+        .status-ok { color: #10b981; }
+        .status-warn { color: #f59e0b; }
+        .status-error { color: #ef4444; }
+        
+        /* Input/Select Styling */
+        .input-group { margin-bottom: 20px; }
+        label { 
+            display: block; 
+            margin-bottom: 8px; 
+            font-weight: 700; 
+            color: #374151; 
+        }
+        select { 
+            width: 100%; 
+            padding: 12px; 
+            border: 1px solid #ccc; 
+            border-radius: 6px; 
+            box-sizing: border-box; 
+            background-color: white;
+            transition: border-color 0.3s;
+        }
+        select:focus {
+            border-color: #3b82f6;
+            outline: none;
+        }
+
+        /* Button Styling */
+        .button-group { display: flex; gap: 10px; margin-bottom: 20px; }
+        button { 
+            flex-grow: 1;
+            padding: 12px 15px; 
+            background-color: #3b82f6; 
+            color: white; 
+            border: none; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            transition: background-color 0.3s, transform 0.1s; 
+            font-weight: 600; 
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        button:hover { 
+            background-color: #2563eb; 
+            transform: translateY(-2px); 
+        }
+        button:active { 
+            transform: translateY(0); 
+        }
+        button:disabled { 
+            background-color: #93c5fd; 
+            cursor: not-allowed; 
+            box-shadow: none;
+        }
+        #capture-button { background-color: #dc2626; }
+        #capture-button:hover { background-color: #b91c1c; }
+
+        /* Image/Camera Preview Area Styling */
+        .main-content { display: flex; gap: 30px; margin-bottom: 30px; }
+        .control-panel { flex: 1; }
+        .image-area { 
+            flex: 1; 
+            border: 3px dashed #60a5fa; 
+            padding: 15px; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            min-height: 250px; 
+            position: relative; 
+            background-color: #f8fafc; 
+            border-radius: 8px; 
+            overflow: hidden;
+        }
+        #image-preview, #camera-feed { 
+            max-width: 100%; 
+            max-height: 220px; 
+            object-fit: contain; 
+            border-radius: 4px;
+        }
+        #image-preview { display: none; }
+        #camera-feed { display: none; transform: scaleX(-1); }
+        #capture-button { position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%); display: none; }
+        #image-placeholder { color: #6b7280; font-style: italic; }
+        
+        /* Response Output */
+        #response-box { 
+            margin-top: 25px; 
+            padding: 20px; 
+            border: 1px solid #1e40af; 
+            border-radius: 8px; 
+            background-color: #eff6ff; 
+            white-space: pre-wrap; 
+            min-height: 120px; 
+            font-size: 1.1em;
+            color: #1e3a8a;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1> Web based LLM Image Describer-UCAS @2025</h1>
+
+        <div class="status-bar">
+            <span>Backend Server: Running ✅</span>
+            <span id="ollama-status">{{ ollama_status }}</span>
+        </div>
+        
+        <div class="main-content">
+            <div class="control-panel">
+                
+                <div class="input-group">
+                    <label for="language-select">Select Target Language:</label>
+                    <select id="language-select">
+                        <option value="English">English</option>
+                        <option value="Chinese">Chinese</option>
+                        <option value="Amharic">Amharic</option>
+                    </select>
+                </div>
+                
+                <div class="input-group">
+                    <label for="model-select">Select VLM for Image Analysis:</label>
+                    <select id="model-select">
+                        {% for name, description in models.items() %}
+                            <option value="{{ name }}">{{ name }} ({{ description }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <label>Image Source:</label>
+                <div class="button-group">
+                    <button id="upload-button" onclick="document.getElementById('image-upload').click();">Upload Image</button>
+                    <button id="camera-toggle-button" onclick="toggleCamera()">Start Camera</button>
+                </div>
+                
+                <input type="file" id="image-upload" accept="image/*" style="display: none;">
+                <input type="hidden" id="image-base64">
+                
+                <button onclick="generateDescription()">Generate Description</button>
+            </div>
+            
+            <div class="image-area">
+                 <img id="image-preview" src="#" alt="Image Preview">
+                 <video id="camera-feed" autoplay></video>
+                 <canvas id="camera-canvas" style="display:none;"></canvas>
+                 <span id="image-placeholder">Upload or Start Camera</span>
+                 <button id="capture-button" onclick="captureImage()">Capture Image</button>
+            </div>
+        </div>
+        
+        <div id="response-box">
+            Waiting for input...
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements & Global Variables ---
+        const ollamaStatusElement = document.getElementById('ollama-status');
+        const imageUpload = document.getElementById('image-upload');
+        const imagePreview = document.getElementById('image-preview');
+        const imageBase64Input = document.getElementById('image-base64');
+        const responseBox = document.getElementById('response-box');
+        const imagePlaceholder = document.getElementById('image-placeholder');
+        
+        const cameraFeed = document.getElementById('camera-feed');
+        const cameraCanvas = document.getElementById('camera-canvas');
+        const captureButton = document.getElementById('capture-button');
+        const cameraToggleButton = document.getElementById('camera-toggle-button');
+        const generateButton = document.querySelector('button[onclick="generateDescription()"]');
+
+        let cameraStream = null;
+
+        // --- Core Functions ---
+        
+        // 1. Image Data Conversion (File Upload)
+        function handleImageChange(file) {
+            if (cameraStream) stopCamera();
+            
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    imagePreview.src = e.target.result;
+                    imagePreview.style.display = 'block';
+                    imagePlaceholder.style.display = 'none';
+
+                    const base64String = e.target.result.split(',')[1];
+                    imageBase64Input.value = base64String;
+                };
+                reader.readAsDataURL(file);
+            } else {
+                imagePreview.style.display = 'none';
+                imagePlaceholder.style.display = 'block';
+                imagePreview.src = '#';
+                imageBase64Input.value = '';
+            }
+        }
+        imageUpload.addEventListener('change', function(event) {
+            handleImageChange(event.target.files[0]);
+        });
+
+
+        // 2. Camera Functions
+        function stopCamera() {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+            }
+            cameraFeed.style.display = 'none';
+            cameraToggleButton.textContent = 'Start Camera';
+            captureButton.style.display = 'none';
+            imagePlaceholder.style.display = 'block';
+        }
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                cameraStream = stream;
+                cameraFeed.srcObject = stream;
+                
+                // Show camera elements
+                cameraFeed.style.display = 'block';
+                imagePreview.style.display = 'none';
+                imagePlaceholder.style.display = 'none';
+                captureButton.style.display = 'block';
+                cameraToggleButton.textContent = 'Stop Camera';
+                imageBase64Input.value = ''; // Clear existing image data
+            } catch (err) {
+                console.error("Error accessing camera: ", err);
+                alert("Cannot access camera. Please ensure permissions are granted.");
+                stopCamera();
+            }
+        }
+
+        function toggleCamera() {
+            if (cameraStream) {
+                stopCamera();
+            } else {
+                startCamera();
+            }
+        }
+
+        function captureImage() {
+            if (!cameraStream) return;
+            
+            cameraCanvas.width = cameraFeed.videoWidth;
+            cameraCanvas.height = cameraFeed.videoHeight;
+            
+            const context = cameraCanvas.getContext('2d');
+            
+            // Apply mirror transform before drawing to correct the view
+            context.translate(cameraCanvas.width, 0);
+            context.scale(-1, 1);
+            context.drawImage(cameraFeed, 0, 0, cameraCanvas.width, cameraCanvas.height);
+            
+            const base64Url = cameraCanvas.toDataURL('image/jpeg', 0.9);
+            const base64String = base64Url.split(',')[1];
+            
+            // Display captured image and save Base64
+            imagePreview.src = base64Url;
+            imagePreview.style.display = 'block';
+            cameraFeed.style.display = 'none';
+            captureButton.style.display = 'none';
+            imageBase64Input.value = base64String;
+            
+            stopCamera(); // Stop the stream after capturing
+        }
+
+        // 3. Health Check
+        function checkOllamaHealth() {
+            fetch('/health')
+                .then(response => response.json().then(data => ({ status: response.status, data })))
+                .then(({ status, data }) => {
+                    if (data.status === 'Available') {
+                        ollamaStatusElement.textContent = `Ollama Connection: ${data.message}`;
+                        ollamaStatusElement.className = 'status-ok';
+                    } else if (data.status === 'Warning') {
+                        ollamaStatusElement.textContent = `Ollama Connection: ${data.message}`;
+                        ollamaStatusElement.className = 'status-warn';
+                    } else if (data.status === 'Error') {
+                        ollamaStatusElement.textContent = `Ollama Connection: ${data.message}`;
+                        ollamaStatusElement.className = 'status-error';
+                    }
+                })
+                .catch(error => {
+                    ollamaStatusElement.textContent = 'Ollama Connection: Unavailable ❌';
+                    ollamaStatusElement.className = 'status-error';
+                });
+        }
+        
+        setTimeout(() => {
+            setInterval(checkOllamaHealth, 5000); 
+        }, 1000); 
+
+
+        // 4. Main Generation Function
+        function generateDescription() {
+            const model = document.getElementById('model-select').value;
+            const language = document.getElementById('language-select').value;
+            const imageBase64 = imageBase64Input.value;
+
+            if (!imageBase64) {
+                responseBox.textContent = "Error: Please upload or capture an image to begin.";
+                return;
+            }
+
+            generateButton.disabled = true;
+            generateButton.textContent = "Processing...";
+            responseBox.textContent = `Step 1/2: Generating English description using ${model}...`;
+
+            fetch('/generate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model: model,
+                    language: language,
+                    image: imageBase64 
+                }),
+            })
+            .then(response => {
+                generateButton.disabled = false;
+                generateButton.textContent = "Generate Description";
+
+                if (!response.ok) {
+                    return response.json().then(err => {
+                        throw new Error(err.response || 'Unknown generation error');
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                responseBox.textContent = data.response;
+            })
+            .catch((error) => {
+                generateButton.disabled = false;
+                generateButton.textContent = "Generate Description";
+                
+                console.error('Generation Error:', error);
+                responseBox.textContent = `Error: Failed to get response. Details: ${error.message}`;
+            });
+        }
+
+        // 5. Initial Setup
+        window.onload = function() {
+            checkOllamaHealth(); 
+            document.getElementById('capture-button').addEventListener('click', captureImage);
+        };
+    </script>
+</body>
+</html>
