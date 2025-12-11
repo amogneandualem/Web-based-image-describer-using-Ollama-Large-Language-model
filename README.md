@@ -1,4 +1,4 @@
-# 🌍 Web-based Image Describer & Multilingual Translator (Ollama LLM/VLM Chain)
+# 🌍 Web-based Image Describer & Multilingual (Ollama LLM/VLM Chain)
 
 This project provides a local, web-based tool for multimodal tasks. It uses an **Ollama-powered chain** to perform two key steps:
 1.  **Image Analysis (VLM):** Generate a detailed English description of an uploaded image.
