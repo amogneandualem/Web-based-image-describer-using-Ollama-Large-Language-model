@@ -9,7 +9,8 @@ from threading import Timer
 app = Flask(__name__)
 
 # --- Configuration ---
-OLLAMA_HOST = 'http://127.0.0.1:11434' 
+# Change this line for deployment:
+OLLAMA_HOST = 'http://placeholder-ollama-host:11434'
 
 # Models available for SELECTION (VLM) + the fixed Translation Model (LLM)
 VLM_MODELS = {
