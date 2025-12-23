@@ -1,16 +1,15 @@
 import base64
 import requests
 import os
-import webbrowser 
-import subprocess # Added for opening the folder
 from flask import Flask, render_template, request, jsonify
-from threading import Timer 
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)  # Important for web requests
 
 # --- Configuration ---
-# Change this line for deployment:
-OLLAMA_HOST = 'http://placeholder-ollama-host:11434'
+# OLLAMA_HOST is now read from environment variable for security
+OLLAMA_HOST = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
 
 # Models available for SELECTION (VLM) + the fixed Translation Model (LLM)
 VLM_MODELS = {
@@ -18,13 +17,12 @@ VLM_MODELS = {
     "llava:latest": "Detailed Object Analysis (VLM)", 
 }
 TRANSLATOR_MODEL = "qwen2:7b" 
-# --- End Configuration ---
 
-# --- API Check Function (No Change) ---
+# --- API Check Function ---
 def check_ollama_status():
     """Checks the health and model availability of the Ollama server."""
     try:
-        health_response = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
+        health_response = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=10)
         health_response.raise_for_status()
 
         installed_models = {model['name'] for model in health_response.json().get('models', [])}
@@ -44,12 +42,10 @@ def check_ollama_status():
     except requests.exceptions.RequestException as e:
         return {"status": "Error", "message": f"Status Error ({getattr(e.response, 'status_code', 'N/A')})"}, 503
 
-# --- Flask Routes
-
+# --- Flask Routes ---
 @app.route('/')
 def index():
     ollama_status, _ = check_ollama_status()
-    
     return render_template('index.html', 
                            ollama_status=ollama_status['message'], 
                            models=VLM_MODELS)
@@ -66,22 +62,14 @@ def generate_response():
     image_base64 = data.get('image')
     target_language = data.get('language')
     
-    translator_model = TRANSLATOR_MODEL 
-    
     # --- Validation ---
     if not vlm_model_name or not target_language or not image_base64:
         return jsonify({"response": "Error: Model, language, and image selection are required."}), 400
-    # ------------------
     
-    # --------------------------------------------------------------------------------------
-    # --- STEP 1: Generate English Description (Conditional Prompt) --------------------------
-    # --------------------------------------------------------------------------------------
-    
+    # --- STEP 1: Generate English Description ---
     if target_language == 'Amharic':
-        # Use a simple, short prompt to reduce complexity for Amharic translation
         vlm_prompt = "Describe the image in a single, short sentence in English."
     else:
-        # Use a detailed prompt for all other languages (like Chinese and English)
         vlm_prompt = (
             "Provide a highly detailed and exhaustive description of the image. "
             "List all visible objects, their actions, their spatial relationship, and the overall context "
@@ -105,22 +93,16 @@ def generate_response():
         
         english_description = vlm_response.json().get("response")
         if not english_description:
-            return jsonify({"response": f"Error: Failed to get English description from {vlm_model_name}. Check Ollama logs."}), 500
+            return jsonify({"response": f"Error: Failed to get English description from {vlm_model_name}."}), 500
 
     except requests.exceptions.RequestException as e:
-        app.logger.error(f"VLM Request Failed: {e}")
-        return jsonify({"response": f"VLM Error ({vlm_model_name}): Could not connect or request timed out. Details: {e}"}), 500
+        return jsonify({"response": f"VLM Error: Could not connect to Ollama server. Details: {e}"}), 500
     
-    # If the target language is already English, we skip the translation step
+    # If target language is English, return directly
     if target_language.lower() == 'english':
         return jsonify({"response": english_description}), 200
         
-    # --------------------------------------------------------------------------------------
-    # --- STEP 2: Translate Description (Qwen2:7b - Fixed Model) --------------------------
-    # --------------------------------------------------------------------------------------
-    
-    translator_model = TRANSLATOR_MODEL 
-    
+    # --- STEP 2: Translate Description ---
     translation_prompt = (
         f"Translate the following English description into the {target_language} language. "
         f"Provide ONLY the translated text, nothing else. "
@@ -128,7 +110,7 @@ def generate_response():
     )
 
     translation_payload = {
-        "model": translator_model,
+        "model": TRANSLATOR_MODEL,
         "prompt": translation_prompt, 
         "stream": False 
     }
@@ -141,48 +123,15 @@ def generate_response():
         )
         translation_response.raise_for_status()
         
-        translated_text = translation_response.json().get("response", "Translation Failed.")
-        
-        translated_text = translated_text.strip()
+        translated_text = translation_response.json().get("response", "Translation Failed.").strip()
         
         if not translated_text and target_language == 'Amharic':
-             return jsonify({"response": f"Translation failed for {target_language}. The LLM produced no text. This usually indicates an issue with script generation."}), 500
+             return jsonify({"response": f"Translation failed for {target_language}."}), 500
 
         return jsonify({"response": translated_text}), 200
 
     except requests.exceptions.RequestException as e:
-        app.logger.error(f"Translation Request Failed: {e}")
-        return jsonify({"response": f"Translation Error ({translator_model}): Could not translate to {target_language}. Details: {e}"}), 500
+        return jsonify({"response": f"Translation Error: Could not translate to {target_language}."}), 500
 
-# --- NEW FUNCTION: Open Project Folder ---
-def open_folder():
-    """Opens the current project directory in the OS file explorer."""
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Platform-specific command to open the folder
-    if os.name == 'nt':  # Windows
-        subprocess.Popen(['explorer', current_dir])
-    elif os.uname().sysname == 'Darwin':  # macOS
-        subprocess.Popen(['open', current_dir])
-    else:  # Linux/Other POSIX
-        subprocess.Popen(['xdg-open', current_dir])
-# --- END NEW FUNCTION ---
-
-# --- NEW FUNCTION: Open Browser ---
-def open_browser():
-      """Opens the browser automatically."""
-      webbrowser.open_new("http://127.0.0.1:5000/")
-# --- END NEW FUNCTION ---
 if __name__ == '__main__':
-    # Ensures auto-open only happens once
-    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
-        Timer(2, open_browser).start()  # <-- DEFAULT: Opens the browser
-
-        # -------------------------------------------------------------------
-        # OPTIONAL: Uncomment the line below and COMMENT OUT the line above 
-        #           if you want to automatically open the project folder
-        #           instead of the browser.
-        # -------------------------------------------------------------------
-        # Timer(2, open_folder).start() 
-        
-    app.run(debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=5000, debug=False)
