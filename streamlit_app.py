@@ -3,240 +3,265 @@ import requests
 import base64
 import time
 
-# ================= CONFIGURATION =================
-# Get Ollama URL from Streamlit Secrets or use default
+# ========== CONFIGURATION ==========
 OLLAMA_HOST = st.secrets.get("OLLAMA_HOST", "http://localhost:11434")
 
 VLM_MODELS = {
-    "moondream:1.8b": "Fast Captioning",
-    "llava:latest": "Detailed Analysis",
+    "moondream:1.8b": "Fast & Lightweight",
+    "llava:latest": "Detailed & Accurate",
 }
 TRANSLATOR_MODEL = "qwen2:7b"
 
-# ================= PAGE SETUP =================
+# ========== PAGE SETUP ==========
 st.set_page_config(
-    page_title="LLM Image Describer",
+    page_title="AI Image Describer",
     page_icon="🖼️",
     layout="wide"
 )
 
-# ================= HELPER FUNCTIONS =================
-def test_ollama_connection(host_url):
-    """Test connection to Ollama server"""
+# ========== CUSTOM STYLING ==========
+st.markdown("""
+<style>
+    .main-header {
+        text-align: center;
+        color: #1E40AF;
+        padding-bottom: 20px;
+        border-bottom: 2px solid #E5E7EB;
+    }
+    .success-box {
+        padding: 15px;
+        background: #D1FAE5;
+        border-radius: 10px;
+        border-left: 5px solid #10B981;
+        margin: 10px 0;
+    }
+    .error-box {
+        padding: 15px;
+        background: #FEE2E2;
+        border-radius: 10px;
+        border-left: 5px solid #EF4444;
+        margin: 10px 0;
+    }
+    .info-box {
+        padding: 15px;
+        background: #DBEAFE;
+        border-radius: 10px;
+        border-left: 5px solid #3B82F6;
+        margin: 10px 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ========== HELPER FUNCTIONS ==========
+def test_ollama_connection():
+    """Test if Ollama server is accessible"""
     try:
-        response = requests.get(f"{host_url}/api/tags", timeout=10)
+        response = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=10)
         if response.status_code == 200:
-            installed_models = {model['name'] for model in response.json().get('models', [])}
-            required = set(VLM_MODELS.keys()) | {TRANSLATOR_MODEL}
-            missing = required - installed_models
+            models = [m['name'] for m in response.json().get('models', [])]
+            required = list(VLM_MODELS.keys()) + [TRANSLATOR_MODEL]
+            missing = [m for m in required if m not in models]
             
             if missing:
-                return False, f"⚠️ Missing models: {', '.join(missing)}"
-            return True, "✅ Connected with all models"
+                return False, f"⚠️ Missing: {', '.join(missing)}"
+            return True, f"✅ Connected ({len(models)} models found)"
         return False, f"❌ Server error: {response.status_code}"
     except Exception as e:
         return False, f"❌ Connection failed: {str(e)}"
 
-def process_image_file(uploaded_file):
-    """Convert uploaded file to base64"""
-    file_bytes = uploaded_file.getvalue()
-    return base64.b64encode(file_bytes).decode('utf-8')
-
-def generate_description(model, image_base64, language, host_url):
+def generate_description(model, image_base64, language):
     """Generate description using Ollama"""
-    # Step 1: Create English prompt
-    if language == 'Amharic':
-        prompt = "Describe the image in a single, short sentence in English."
-    else:
-        prompt = "Provide a detailed description of this image in English."
-    
-    # Step 1: Get English description
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "images": [image_base64],
-        "stream": False
-    }
-    
     try:
-        response = requests.post(
-            f"{host_url}/api/generate",
-            json=payload,
+        # Step 1: Generate English description
+        if language == 'Amharic':
+            prompt = "Describe this image in one short English sentence."
+        else:
+            prompt = "Describe this image in detail in English."
+        
+        # Call Ollama for VLM
+        vlm_response = requests.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json={
+                "model": model,
+                "prompt": prompt,
+                "images": [image_base64],
+                "stream": False
+            },
             timeout=120
         )
-        response.raise_for_status()
-        english_desc = response.json().get("response", "")
+        
+        if vlm_response.status_code != 200:
+            return None, f"VLM error: {vlm_response.status_code}"
+        
+        english_desc = vlm_response.json().get('response', '').strip()
         
         # Step 2: Translate if needed
         if language.lower() == 'english':
-            return english_desc, ""
+            return english_desc, None
         
-        trans_prompt = f"Translate this to {language}:\n\n{english_desc}"
-        trans_payload = {
-            "model": TRANSLATOR_MODEL,
-            "prompt": trans_prompt,
-            "stream": False
-        }
-        
+        # Translate
         trans_response = requests.post(
-            f"{host_url}/api/generate",
-            json=trans_payload,
+            f"{OLLAMA_HOST}/api/generate",
+            json={
+                "model": TRANSLATOR_MODEL,
+                "prompt": f"Translate to {language}:\n\n{english_desc}",
+                "stream": False
+            },
             timeout=60
         )
-        trans_response.raise_for_status()
         
-        translated = trans_response.json().get("response", "").strip()
+        if trans_response.status_code != 200:
+            return english_desc, f"Translation failed. English: {english_desc}"
+        
+        translated = trans_response.json().get('response', '').strip()
         return translated, english_desc
         
     except Exception as e:
-        raise Exception(f"Ollama error: {str(e)}")
+        return None, f"Error: {str(e)}"
 
-# ================= MAIN APP UI =================
-st.title("🖼️ LLM Image Describer")
-st.markdown("Upload an image to get AI-generated descriptions in multiple languages.")
+# ========== MAIN APP ==========
+st.markdown('<h1 class="main-header">🖼️ AI Image Description Generator</h1>', unsafe_allow_html=True)
 
-# Sidebar Configuration
+# Sidebar
 with st.sidebar:
     st.header("⚙️ Configuration")
     
     # Connection status
-    st.subheader("🔗 Ollama Connection")
-    
-    # Let user input Ollama URL (overrides secrets)
-    custom_host = st.text_input(
-        "Ollama Server URL",
-        value=OLLAMA_HOST,
-        help="Enter your Ollama server URL (e.g., https://your-ngrok.ngrok.io)"
-    )
-    
-    # Test connection button
-    if st.button("Test Connection", type="secondary"):
+    st.markdown("### 🔗 Ollama Connection")
+    if st.button("Test Connection", use_container_width=True):
         with st.spinner("Testing..."):
-            success, message = test_ollama_connection(custom_host)
+            success, msg = test_ollama_connection()
             if success:
-                st.success(message)
+                st.success(msg)
             else:
-                st.error(message)
-                st.info("Make sure Ollama is running and accessible at the URL above.")
+                st.error(msg)
     
     st.divider()
     
     # Model selection
+    st.markdown("### 🤖 Select Model")
     selected_model = st.selectbox(
         "Vision Model",
         options=list(VLM_MODELS.keys()),
-        format_func=lambda x: f"{x} - {VLM_MODELS[x]}"
+        label_visibility="collapsed"
     )
+    st.caption(VLM_MODELS[selected_model])
     
     # Language selection
+    st.markdown("### 🌍 Select Language")
     target_language = st.selectbox(
         "Output Language",
-        ["English", "Chinese", "Amharic", "French", "Spanish", "German"]
+        ["English", "Chinese", "Amharic", "French", "Spanish"],
+        label_visibility="collapsed"
     )
     
     st.divider()
-    st.info("💡 **Requirements:**\n- Ollama server running\n- Models: llava, moondream, qwen2:7b")
+    st.markdown('<div class="info-box">', unsafe_allow_html=True)
+    st.markdown("**Requirements:**")
+    st.markdown("1. Ollama server running")
+    st.markdown("2. Models: `llava`, `moondream`, `qwen2:7b`")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# Main content area
-col1, col2 = st.columns([1, 1])
+# Main content
+tab1, tab2 = st.tabs(["📷 Upload Image", "📖 Instructions"])
 
-with col1:
-    st.subheader("📷 Upload Image")
-    
+with tab1:
+    # File upload
     uploaded_file = st.file_uploader(
-        "Choose an image file",
+        "Choose an image (JPG, PNG)",
         type=['jpg', 'jpeg', 'png'],
-        help="Supported formats: JPG, JPEG, PNG",
         label_visibility="collapsed"
     )
     
     if uploaded_file:
-        # Display the image
-        st.image(uploaded_file, caption="Your Image", use_column_width=True)
+        # Display image
+        st.image(uploaded_file, use_column_width=True)
         
-        # Show file info
-        file_size = len(uploaded_file.getvalue()) / 1024
-        st.caption(f"File: {uploaded_file.name} | Size: {file_size:.1f} KB")
+        # Convert to base64
+        image_base64 = base64.b64encode(uploaded_file.getvalue()).decode()
         
-        # Process button
+        # Generate button
         if st.button("🚀 Generate Description", type="primary", use_container_width=True):
-            with st.spinner("Processing..."):
-                try:
-                    # Convert image
-                    image_base64 = process_image_file(uploaded_file)
-                    
-                    # Generate description
-                    with st.spinner("Analyzing with AI..."):
-                        result, english_original = generate_description(
-                            selected_model, 
-                            image_base64, 
-                            target_language,
-                            custom_host
-                        )
-                    
-                    # Display results
-                    st.success("✅ Analysis Complete!")
-                    
-                    # Main result
-                    st.text_area("Description", result, height=200, label_visibility="collapsed")
+            with st.spinner(f"Processing with {selected_model}..."):
+                result, error_or_english = generate_description(
+                    selected_model,
+                    image_base64,
+                    target_language
+                )
+                
+                if result:
+                    st.markdown("### ✅ Description Generated")
+                    st.markdown('<div class="success-box">', unsafe_allow_html=True)
+                    st.write(result)
+                    st.markdown('</div>', unsafe_allow_html=True)
                     
                     # Download button
                     st.download_button(
-                        label="📥 Download Result",
+                        "📥 Download Result",
                         data=result,
-                        file_name=f"image_description_{target_language}.txt",
-                        mime="text/plain"
+                        file_name=f"description_{target_language}.txt"
                     )
                     
-                    # Show original if translated
-                    if target_language.lower() != 'english' and english_original:
+                    # Show English original if translated
+                    if target_language.lower() != 'english' and error_or_english:
                         with st.expander("View Original English"):
-                            st.write(english_original)
-                            
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
-                    st.info("""
-                    **Troubleshooting:**
-                    1. Check Ollama server is running
-                    2. Verify URL is correct
-                    3. Test connection in sidebar
-                    """)
+                            st.write(error_or_english)
+                else:
+                    st.markdown('<div class="error-box">', unsafe_allow_html=True)
+                    st.error(f"Failed: {error_or_english}")
+                    st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.info("👈 Please upload an image to begin")
 
-with col2:
-    st.subheader("📝 How to Use")
+with tab2:
+    st.header("📚 Complete Setup Guide")
     
-    st.markdown("""
-    ### Setup Instructions:
+    st.markdown("### Step 1: Install Ollama & Models")
+    st.code("""
+# Install Ollama from https://ollama.com
+# Then run these commands:
+
+# Pull required models
+ollama pull llava:latest
+ollama pull moondream:1.8b
+ollama pull qwen2:7b
+
+# Start Ollama server
+ollama serve
+""")
     
-    1. **Start Ollama on your computer:**
-    ```bash
-    ollama serve
-    ```
+    st.markdown("### Step 2: Make Ollama Public with Ngrok")
+    st.code("""
+# Download ngrok from https://ngrok.com
+# Sign up for free account
+# Get your authtoken
+
+# Start ngrok tunnel
+ngrok http 11434
+
+# Copy the URL shown (like https://abc123.ngrok.io)
+""")
     
-    2. **Install and run ngrok (for public access):**
-    ```bash
-    ngrok http 11434
-    ```
+    st.markdown("### Step 3: Configure Streamlit Secrets")
+    st.code("""
+1. Go to: https://share.streamlit.io
+2. Find your app: ufr2baqg57qg5jmzskupz6
+3. Click "⋮" → "Settings" → "Secrets"
+4. Add this (replace with your ngrok URL):
+
+OLLAMA_HOST = "https://your-ngrok-url.ngrok.io"
+
+5. Click "Save"
+""")
     
-    3. **Copy the ngrok URL (e.g., `https://abc123.ngrok.io`)**
-    
-    4. **Paste the URL in the sidebar → "Ollama Server URL"**
-    
-    5. **Click "Test Connection" to verify**
-    
-    6. **Upload an image and click "Generate Description"**
-    
-    ### Required Models:
-    Run these commands in your terminal:
-    ```bash
-    ollama pull llava:latest
-    ollama pull moondream:1.8b
-    ollama pull qwen2:7b
-    ```
-    """)
+    st.markdown("### Step 4: Test Your App")
+    st.code("""
+1. Visit: https://ufr2baqg57qg5jmzskupz6.streamlit.app
+2. Upload any image
+3. Click "Generate Description"
+""")
 
 # Footer
 st.divider()
-st.caption(f"Connected to: `{custom_host}` | Using model: {selected_model} | Language: {target_language}")
+st.caption(f"Ollama Server: `{OLLAMA_HOST}` | Model: `{selected_model}` | Language: `{target_language}`")
+st.caption("💡 **Note**: Keep your Ollama server running while using this app")
