@@ -1,7 +1,5 @@
-<<<<<<< HEAD
-﻿Flask
-=======
-Flask
->>>>>>> 55cb173eb6c114331a1b9d5720f33d970b628d67
+streamlit
+flask
 requests
-gunicorn
+pillow
+python-dotenv
