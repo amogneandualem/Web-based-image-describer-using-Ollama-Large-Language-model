@@ -1,18 +1,9 @@
-# Use a Python base image (adjust version if necessary)
-FROM python:3.10-slim
-
-# Set the working directory
-WORKDIR /app
-
-# Copy all project files into the container
-COPY . /app
-
-# Install the dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Expose the port Hugging Face Spaces requires
-EXPOSE 7860
-
-# Command to run the application using Gunicorn (recommended for production)
-# Note: Hugging Face Spaces usually proxies traffic to 0.0.0.0:7860
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:7860", "app:app"]
+FROM python:3.9-slim
+# Install Ollama
+RUN curl -L https://ollama.com/download/ollama-linux-amd64 -o /usr/bin/ollama && chmod +x /usr/bin/ollama
+# Install dependencies
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . .
+# Start Ollama and Streamlit together
+CMD ollama serve & sleep 5 && ollama pull llava && streamlit run app.py
